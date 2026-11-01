@@ -23,6 +23,13 @@ import '../transport/webrtc_transport.dart';
 import '../util/bytes.dart';
 import 'secret_store.dart';
 
+/// Secret-restore trace.
+///
+/// Printed unconditionally because the failure only reproduces in a release
+/// APK: `adb logcat` has to tell "stored but unreadable" (Keystore miss) apart
+/// from "never stored" (a different server scope was used last launch).
+void debugLog(String message) => print('[dsh-remote] $message');
+
 /// The signed-in account on one Server.
 class RemoteUser {
   const RemoteUser({required this.account, required this.deviceId, required this.serverUrl, this.provider});
@@ -343,14 +350,28 @@ class RemoteAccount {
 
   Future<void> _restore() async {
     if (_restored) return;
+    String? rawIdentity;
+    String? rawCredentials;
+    try {
+      rawIdentity = await _secrets.read(_identityKey);
+      rawCredentials = await _secrets.read(_credentialsKey);
+    } on Object catch (error) {
+      // A transient store failure is NOT "never signed in". Leaving [_restored]
+      // false lets the next call retry, instead of silently minting a new
+      // identity and deleting the refresh token below.
+      debugLog('secret read failed (scope=$_scope): $error');
+      return;
+    }
+    debugLog('restore scope=$_scope identity=${rawIdentity == null ? 'MISS' : 'HIT'} '
+        'credentials=${rawCredentials == null ? 'MISS' : 'HIT'}');
     _restored = true;
-    final identity = asMap(tryDecodeJson(await _secrets.read(_identityKey) ?? ''));
+    final identity = asMap(tryDecodeJson(rawIdentity ?? ''));
     try {
       if (identity != null) _identity = _Identity.fromJson(identity);
     } on Object {
       _identity = null; // corrupt record: a new identity is created at sign-in
     }
-    final credentials = asMap(tryDecodeJson(await _secrets.read(_credentialsKey) ?? ''));
+    final credentials = asMap(tryDecodeJson(rawCredentials ?? ''));
     try {
       if (credentials != null) {
         final parsed = _Credentials.fromJson(credentials);
@@ -526,6 +547,7 @@ class RemoteAccount {
     _identity = identity;
     _credentials = null;
     await _secrets.delete(_credentialsKey);
+    debugLog('created identity ${identity.deviceId} (scope=$_scope)');
     return identity;
   }
 
