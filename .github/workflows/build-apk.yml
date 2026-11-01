@@ -1,6 +1,4 @@
 name: build-apk
-
-# 手动触发 + 推 main 时自动跑。产物在 Actions 页面底部的 Artifacts。
 on:
   workflow_dispatch:
   push:
@@ -9,7 +7,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -24,17 +22,53 @@ jobs:
           channel: stable
           cache: true
 
+      - name: add swap
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 6
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk 2>/dev/null || true
+          df -h /
+          free -h
+
       - name: flutter pub get
         working-directory: app
         run: flutter pub get
 
       - name: flutter build apk
+        id: build
         working-directory: app
-        run: flutter build apk --release --target-platform android-arm64
+        run: |
+          set -o pipefail
+          flutter build apk --release --target-platform android-arm64 2>&1 | tee build.log
+        continue-on-error: true
+
+      - name: report build result
+        if: always()
+        working-directory: app
+        run: |
+          echo "=== free ==="
+          free -h
+          echo "=== disk ==="
+          df -h /
+          echo "=== flutter build.log tail ==="
+          tail -120 build.log 2>/dev/null || echo "no build.log"
+          echo "=== apk anywhere under app ==="
+          find . -name '*.apk' -exec ls -la {} \; 2>/dev/null || echo "no apk"
+          echo "=== outputs tree ==="
+          ls -R build/app/outputs 2>/dev/null | head -60 || echo "no outputs dir"
+          echo "=== gradle daemon logs ==="
+          find ~/.gradle/daemon -name '*.log' -newermt '-90 minutes' -exec tail -60 {} \; 2>/dev/null || echo "no daemon log"
 
       - name: upload apk
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dsh-go-arm64-release
-          path: app/build/app/outputs/flutter-apk/*.apk
+          name: dsh-go-apk
+          path: |
+            app/build/app/outputs/flutter-apk/*.apk
+            app/app/build.log
           retention-days: 14
+          if-no-files-found: warn
