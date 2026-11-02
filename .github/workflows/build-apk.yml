@@ -49,6 +49,32 @@ jobs:
           du -sh runtime/out
         timeout-minutes: 120
 
+      # app/android/app/build.gradle.kts reads app/android/key.properties and, when it
+      # exists, signs the release build with that key instead of the debug key. Without
+      # it every runner mints a fresh debug certificate, so each build has a different
+      # signature and every upgrade needs an uninstall first — which wipes the app's
+      # stored device identity (remote server URL, host list, pairing key).
+      - name: write release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::KEYSTORE_BASE64 is not set — this APK will be debug-signed and cannot be installed over a release-signed build."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/release.jks" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEYSTORE_PASSWORD" \
+            > app/android/key.properties
+          echo "=== keystore ==="
+          ls -la "$RUNNER_TEMP/release.jks"
+          "$JAVA_HOME/bin/keytool" -list -keystore "$RUNNER_TEMP/release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" | head -6
+          echo "=== key.properties (alias and path only) ==="
+          grep -E '^(storeFile|keyAlias)=' app/android/key.properties
+
       - name: flutter pub get
         working-directory: app
         run: flutter pub get
@@ -90,3 +116,11 @@ jobs:
             runtime/out/manifest.json
           retention-days: 14
           if-no-files-found: warn
+
+      # The runner is disposable, but leave nothing behind anyway: key.properties was
+      # only ever needed between "write release keystore" and the Gradle build.
+      - name: scrub signing material
+        if: always()
+        run: |
+          rm -f app/android/key.properties "$RUNNER_TEMP/release.jks"
+          echo "signing material removed"
