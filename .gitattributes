@@ -1,0 +1,5 @@
+# Keep the repository itself at LF regardless of the contributor's platform.
+# Working-tree checkouts still use the platform default, so Windows editors are
+# unaffected. Without this, a single CRLF-saving editor rewrites whole files and
+# hides real changes in the diff.
+* text=auto
