@@ -24,6 +24,13 @@ import '../transport/webrtc_transport.dart';
 import '../util/bytes.dart';
 import 'secret_store.dart';
 
+/// Secret-restore trace.
+///
+/// Printed unconditionally because the failure only reproduces in a release
+/// APK: `adb logcat` has to tell "stored but unreadable" (Keystore miss) apart
+/// from "never stored" (a different server scope was used last launch).
+void debugLog(String message) => print('[dsh-remote] $message');
+
 // Accounts using the same storage object and server keys share commit order.
 // An Expando does not keep an otherwise unreachable SecretStore alive.
 class _AccountStorageState {
@@ -480,13 +487,29 @@ class RemoteAccount {
   }
 
   Future<void> _readStoredAccount() async {
-    final identity = asMap(tryDecodeJson(await _secrets.read(_identityKey) ?? ''));
+    String? rawIdentity;
+    String? rawCredentials;
+    try {
+      rawIdentity = await _secrets.read(_identityKey);
+      rawCredentials = await _secrets.read(_credentialsKey);
+    } on Object catch (error) {
+      // A transient store failure is NOT "never signed in": surface it to the
+      // caller and leave [_restored] false, so the next call retries. Swallowing
+      // it here would report a signed-out account and let a sign-in mint a new
+      // device identity, deleting the stored refresh token.
+      debugLog('secret read failed (scope=$_scope): $error');
+      rethrow;
+    }
+    debugLog('restore scope=$_scope identity=${rawIdentity == null ? 'MISS' : 'HIT'} '
+        'credentials=${rawCredentials == null ? 'MISS' : 'HIT'}');
+    _restored = true;
+    final identity = asMap(tryDecodeJson(rawIdentity ?? ''));
     try {
       if (identity != null) _identity = _Identity.fromJson(identity);
     } on Object {
       _identity = null; // corrupt record: a new identity is created at sign-in
     }
-    final credentials = asMap(tryDecodeJson(await _secrets.read(_credentialsKey) ?? ''));
+    final credentials = asMap(tryDecodeJson(rawCredentials ?? ''));
     try {
       if (credentials != null) {
         final parsed = _Credentials.fromJson(credentials);
@@ -495,7 +518,6 @@ class RemoteAccount {
     } on Object {
       _credentials = null;
     }
-    _restored = true;
   }
 
   /// QR-capable sign-in providers of this Server (empty on a self-hosted
@@ -663,6 +685,7 @@ class RemoteAccount {
     await _secrets.write(_identityKey, jsonEncode(identity.toJson()));
     _identity = identity;
     await _dropCredentials();
+    debugLog('created identity ${identity.deviceId} (scope=$_scope)');
     return identity;
   }
 

@@ -87,8 +87,12 @@ String _short(String name) {
 
 // ── Secrets ──────────────────────────────────────────────────────────────────
 
-/// Keystore-backed in the app; tests override with [MemorySecretStore].
-final secretStoreProvider = Provider<SecretStore>((ref) => SecureSecretStore());
+/// Keystore-backed in the app, mirrored to a file: a Keystore read miss on a
+/// cold start otherwise costs the device identity (password sign-in plus a new
+/// fingerprint). Tests override with [MemorySecretStore].
+final secretStoreProvider = Provider<SecretStore>(
+  (ref) => FallbackSecretStore(SecureSecretStore(), FileSecretStore()),
+);
 
 // ── Saved SSH hosts ──────────────────────────────────────────────────────────
 
