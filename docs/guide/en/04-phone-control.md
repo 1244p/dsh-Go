@@ -115,6 +115,19 @@ Disclaimer:
 - Turn it on only when you need it, and off when you're done.
 - We advise against turning it on for a device that holds payment or banking details.
 
+## Settings, apps and files (needs Root)
+
+With non-disruptive mode on and **Root** picked as the channel, DSH also gets four more tools. They never look at or tap the screen, so they work before a task starts and after one ends:
+
+- `device_status`: reports which channel is in use and whether Root is reachable.
+- `device_setting`: reads or changes a few system settings, such as brightness, auto-rotate, screen timeout and do-not-disturb. Only listed keys can be changed, each within a range, and a write is read back — a mismatch is reported as unconfirmed rather than as success. A few keys are deliberately absent: debugging switches, install-from-unknown-sources, mock location and the accessibility service list. Those would let the agent grant itself more power, so they are not open.
+- `device_app`: reads an app's details, or disables, enables or force-stops it. Payment, banking and brokerage apps are on the 「Hands off」 list and are refused outright — the request never reaches the root layer.
+- `device_files`: lists, reads and writes files, limited to `/sdcard` and `/storage/emulated/0`. `Android/data`, `Android/obb` and `Android/media` stay closed — that is other apps' private data. Reads and writes are paged at 2 MB, and a write goes to a temporary file that is then renamed, so a half-written file is never left behind.
+
+Reading a setting needs no confirmation; changing one, acting on an app and writing a file all go through **Confirmation**. Without Root these four tools stay in the catalog and answer "this needs real Root" instead of disappearing — the tool list entering every request means any change to it throws away the whole conversation's cache.
+
+Turn non-disruptive mode off, or switch the channel to Shizuku or ADB, and these four refuse outright: Shizuku and ADB grant shell access (uid 2000), which can neither change these settings nor read another app's directory.
+
 ## Action log and advanced
 
 **Recent actions** logs every step, without screen contents. Tap **All actions** to see them. The log lasts until the app closes.
