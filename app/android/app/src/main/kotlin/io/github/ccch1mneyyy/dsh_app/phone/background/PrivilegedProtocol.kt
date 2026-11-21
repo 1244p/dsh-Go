@@ -146,6 +146,26 @@ object Proto {
     const val USER = "user"
     const val APP_PACKAGE = "io.github.ccch1mneyyy.dsh_app"
 
+    // ---- fixed device verbs (root only, no shell) --------------------------------------
+    // Each carries [DEVICE_ACTION] and only the fields its action needs. There is deliberately
+    // no shell verb: this engine sits behind a public relay, so an escaped token must not be
+    // able to run a command, only to reach these three bounded surfaces.
+    const val OP_DEVICE_SETTING = "deviceSetting"
+    const val OP_DEVICE_APP = "deviceApp"
+    const val OP_DEVICE_FILES = "deviceFiles"
+    const val DEVICE_ACTION = "deviceAction"
+    const val DEVICE_NAMESPACE = "deviceNamespace"
+    const val DEVICE_KEY = "deviceKey"
+    const val DEVICE_VALUE = "deviceValue"
+    const val DEVICE_PACKAGE = "devicePackage"
+    const val DEVICE_PATH = "devicePath"
+    const val DEVICE_DATA = "deviceData"
+    const val DEVICE_OFFSET = "deviceOffset"
+    const val DEVICE_LIMIT = "deviceLimit"
+    const val DEVICE_TOTAL = "deviceTotal"
+    const val DEVICE_ENTRIES = "deviceEntries"
+    const val DEVICE_TRUNCATED = "deviceTruncated"
+
     const val INJECT_OK = "injectOk"
     /** Gate only, with INJECT_OK false: the failing injection's [ERROR] code. Older cores omit it. */
     const val INJECT_ERROR = "injectError"
@@ -292,6 +312,24 @@ object Reasons {
         "locked" -> "设备已锁定，后台屏操作已停止"
         // l10n:keep privileged protocol
         "invalidArguments" -> "后台屏动作参数无效"
+        // l10n:keep device verbs
+        "deviceKeyNotAllowed" -> "这个设置项不在允许改动的名单里，未执行"
+        // l10n:keep device verbs
+        "readbackMismatch" -> "写入已发出，但读回的值与预期不一致，未确认成功"
+        // l10n:keep device verbs
+        "devicePackageNotAllowed" -> "这个应用不在允许改动的名单里，未执行"
+        // l10n:keep device verbs
+        "devicePackageUnknown" -> "设备上没有这个包名"
+        // l10n:keep device verbs
+        "pathOutsideRoot" -> "路径不在允许访问的目录里，未执行"
+        // l10n:keep device verbs
+        "pathNotFound" -> "这个路径不存在"
+        // l10n:keep device verbs
+        "fileTooLarge" -> "文件超过单次读写上限，请改用 offset/limit 分页"
+        // l10n:keep device verbs
+        "notADirectory", "notAFile" -> "路径类型与动作不符（目录/文件）"
+        // l10n:keep device verbs
+        "deviceRootRequired" -> "这个能力需要真 Root 授权；当前通道不是 Root，未执行"
         // l10n:keep privileged protocol
         "cancelled" -> "后台屏操作已停止，已派发动作不代表已撤销"
         // l10n:keep privileged protocol

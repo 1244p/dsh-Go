@@ -65,7 +65,8 @@ class PhoneToolSchemaTest {
         val json = checkNotNull(server.handle(Json.write(mapOf("jsonrpc" to "2.0", "id" to 1, "method" to "tools/list"))))
         val listed = ((Json.parse(json) as Map<*, *>)["result"] as Map<*, *>)["tools"] as List<*>
         assertEquals(PhoneToolCatalog.listJson(), listed)
-        assertEquals(listOf("apps", "open", "intent", "notify", "clipboard", "screen", "collect", "tap", "type", "scroll", "key", "tap_xy", "handoff"),
+        assertEquals(listOf("apps", "open", "intent", "notify", "clipboard", "screen", "collect", "tap", "type", "scroll", "key", "tap_xy", "handoff",
+            "device_setting", "device_app", "device_files", "device_status"),
             listed.map { (it as Map<*, *>)["name"] })
         for (tool in listed) {
             val schema = (tool as Map<*, *>)["inputSchema"] as Map<*, *>
@@ -73,7 +74,7 @@ class PhoneToolSchemaTest {
         }
         assertFalse(json.contains("\"minimum\""))
         assertFalse(json.contains("\"maximum\""))
-        assertEquals(13, PhoneToolCatalog.tools.size)
+        assertEquals(17, PhoneToolCatalog.tools.size)
         val tap = PhoneToolCatalog.tools.single { it.name == PhoneToolCatalog.TAP_XY }
         assertEquals(listOf("observation", "x", "y"), tap.required)
         assertEquals(listOf("observation", "x", "y", "action", "x2", "y2", "duration_ms"), tap.properties.keys.toList())

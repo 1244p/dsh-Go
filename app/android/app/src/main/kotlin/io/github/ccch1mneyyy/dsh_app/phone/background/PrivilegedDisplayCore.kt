@@ -210,6 +210,14 @@ class PrivilegedDisplayCore internal constructor(
                 response.putBoolean(Proto.OK, true)
                 return response
             }
+            if (op == Proto.OP_DEVICE_SETTING || op == Proto.OP_DEVICE_APP || op == Proto.OP_DEVICE_FILES) {
+                // Like OP_GRANT_SECURE_SETTINGS: no display, no package and no gate, so the verbs
+                // work before any task exists and keep working after one ends. The lock keeps a
+                // settings readback or a file splice from interleaving with the display ops.
+                lock.withLock { deviceRequest(op, request, response) }
+                response.putBoolean(Proto.OK, true)
+                return response
+            }
             lock.withLock {
                 targetReply = targetReply || targetSequence != null
                 selfCheckReply = selfCheckReply || selfCheckOwner
@@ -2096,6 +2104,68 @@ class PrivilegedDisplayCore internal constructor(
         // DISPLAY_IME_POLICY_HIDE == 2
         wm.javaClass.getMethod("setDisplayImePolicy", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
             .invoke(wm, displayId, 2)
+    }
+
+    /**
+     * The three fixed device verbs. No display, no owner, no gates: they answer before any task
+     * exists and keep answering after one ends, which is why they live in [handle]'s early-return
+     * block rather than [dispatch]. Caller policy (deny list, confirmations) is enforced one level
+     * up in `PhoneCore`; this only refuses the two things that must never depend on a caller: this
+     * app's own package, and any path outside shared storage.
+     */
+    private fun deviceRequest(op: String, request: Bundle, response: Bundle) {
+        val verbs = DeviceVerbs(privileged)
+        val action = request.getString(Proto.DEVICE_ACTION)
+        if (op == Proto.OP_DEVICE_SETTING) {
+            val namespace = request.getString(Proto.DEVICE_NAMESPACE)
+            val key = request.getString(Proto.DEVICE_KEY)
+            when (action) {
+                DeviceSurface.OP_READ -> {
+                    response.putString(Proto.DEVICE_VALUE, verbs.readSetting(namespace, key))
+                    response.putString(Proto.DEVICE_NAMESPACE, namespace)
+                    response.putString(Proto.DEVICE_KEY, key)
+                }
+                DeviceSurface.OP_WRITE -> verbs.writeSetting(namespace, key, request.getInt(Proto.DEVICE_VALUE, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE })
+                else -> throw Fault("invalidArguments")
+            }
+            return
+        }
+        if (op == Proto.OP_DEVICE_APP) {
+            // The caller's deny list travels with the request: the core enforces the same policy the
+            // tool layer does, so a leaked cookie cannot reach a payment app by skipping PhoneCore.
+            val deny = request.getStringArray(Proto.DEVICE_ENTRIES)?.toList().orEmpty()
+            val facts = verbs.app(request.getString(Proto.DEVICE_PACKAGE), action, deny)
+            response.putString(Proto.DEVICE_PACKAGE, facts["package"] as? String)
+            response.putString(Proto.APP_LABEL, facts["label"] as? String)
+            response.putBoolean("enabled", facts["enabled"] as? Boolean ?: true)
+            response.putInt(Proto.UID, (facts["uid"] as? Int) ?: -1)
+            response.putString("versionName", facts["versionName"] as? String)
+            response.putBoolean("system", facts["system"] as? Boolean ?: false)
+            return
+        }
+        val path = request.getString(Proto.DEVICE_PATH)
+        when (action) {
+            DeviceSurface.OP_LIST -> {
+                val listed = verbs.list(path, request.getInt(Proto.DEVICE_LIMIT, DeviceSurface.MAX_ENTRIES))
+                response.putString(Proto.DEVICE_PATH, listed["path"] as? String)
+                response.putStringArray(Proto.DEVICE_ENTRIES, (listed["entries"] as? List<*>)?.map { it as String }?.toTypedArray())
+                response.putBoolean(Proto.DEVICE_TRUNCATED, listed["truncated"] as? Boolean ?: false)
+                response.putInt(Proto.DEVICE_TOTAL, listed["total"] as? Int ?: 0)
+            }
+            DeviceSurface.OP_READ -> {
+                val bytes = verbs.read(path, request.getInt(Proto.DEVICE_OFFSET, 0), request.getInt(Proto.DEVICE_LIMIT, DeviceSurface.MAX_BYTES))
+                response.putString(Proto.DEVICE_PATH, bytes["path"] as? String)
+                response.putByteArray(Proto.DEVICE_DATA, bytes["data"] as? ByteArray ?: ByteArray(0))
+                response.putInt(Proto.DEVICE_OFFSET, bytes["offset"] as? Int ?: 0)
+                response.putInt(Proto.DEVICE_TOTAL, ((bytes["total"] as? Long) ?: 0L).toInt())
+            }
+            DeviceSurface.OP_WRITE -> {
+                val written = verbs.write(path, request.getByteArray(Proto.DEVICE_DATA), request.getInt(Proto.DEVICE_OFFSET, 0))
+                response.putString(Proto.DEVICE_PATH, written["path"] as? String)
+                response.putInt(Proto.DEVICE_TOTAL, ((written["total"] as? Long) ?: 0L).toInt())
+            }
+            else -> throw Fault("invalidArguments")
+        }
     }
 
     /**

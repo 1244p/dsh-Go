@@ -23,6 +23,16 @@ object PhoneToolCatalog {
     const val TAP_XY = "tap_xy"
     const val HANDOFF = "handoff"
 
+    // Privileged device verbs. Root only, but always listed: see the note above.
+    const val DEVICE_SETTING = "device_setting"
+    const val DEVICE_APP = "device_app"
+    const val DEVICE_FILES = "device_files"
+    const val DEVICE_STATUS = "device_status"
+
+    val SETTING_NAMESPACES = listOf("system", "secure", "global")
+    val APP_ACTIONS = listOf("info", "disable", "enable", "forceStop")
+    val FILE_ACTIONS = listOf("list", "read", "write")
+
     class Tool(val name: String, val description: String, val properties: Map<String, Any?>, val required: List<String>) {
         fun toJson(): Map<String, Any?> = linkedMapOf(
             "name" to name,
@@ -252,6 +262,61 @@ object PhoneToolCatalog {
             // l10n:keep agent tool catalog
             linkedMapOf("reason" to str("要用户做什么，一句话")),
             listOf("reason"),
+        ),
+        Tool(
+            DEVICE_SETTING,
+            // l10n:keep agent tool catalog
+            "读或改一项系统设置（亮度、息屏时间、自动对时、勿扰等）。只有固定白名单里的键能改，写入后会读回核对；不在白名单的键会被拒绝，不要重试。需要真 Root。",
+            linkedMapOf(
+                // l10n:keep agent tool catalog
+                "namespace" to enum(SETTING_NAMESPACES, "设置表：system / secure / global"),
+                // l10n:keep agent tool catalog
+                "key" to str("设置项名称，如 screen_brightness"),
+                // l10n:keep agent tool catalog
+                "value" to int("写入的整数值；只读时省略"),
+                // l10n:keep agent tool catalog
+                "action" to enum(listOf("read", "write"), "read 读，write 写，默认 read"),
+            ),
+            listOf("namespace", "key"),
+        ),
+        Tool(
+            DEVICE_APP,
+            // l10n:keep agent tool catalog
+            "查一个应用的信息，或停用 / 启用 / 强制停止它。支付、银行、券商类应用默认拒绝；停用和强制停止会先请用户确认。需要真 Root。",
+            linkedMapOf(
+                // l10n:keep agent tool catalog
+                "package" to str("包名，如 com.example.app"),
+                // l10n:keep agent tool catalog
+                "action" to enum(APP_ACTIONS, "info 查信息；disable 停用；enable 启用；forceStop 强制停止"),
+            ),
+            listOf("package", "action"),
+        ),
+        Tool(
+            DEVICE_FILES,
+            // l10n:keep agent tool catalog
+            "在手机共享存储（/sdcard）里列目录、读文件、写文件。只能访问共享存储，Android/data 等应用私有目录一律拒绝；文件超过 2 MiB 要用 offset 分页。需要真 Root。",
+            linkedMapOf(
+                // l10n:keep agent tool catalog
+                "action" to enum(FILE_ACTIONS, "list 列目录；read 读；write 写"),
+                // l10n:keep agent tool catalog
+                "path" to str("绝对路径，必须在 /sdcard 或 /storage/emulated/0 下"),
+                // l10n:keep agent tool catalog
+                "offset" to int("读写的起始字节偏移，省略为 0"),
+                // l10n:keep agent tool catalog
+                "limit" to int("最多读多少字节，上限 2 MiB"),
+                // l10n:keep agent tool catalog
+                "encoding" to enum(listOf("utf8", "base64"), "内容编码：read 决定返回格式，write 决定 content 的格式，默认 utf8"),
+                // l10n:keep agent tool catalog
+                "content" to str("要写入的内容（按 encoding 解码）"),
+            ),
+            listOf("action", "path"),
+        ),
+        Tool(
+            DEVICE_STATUS,
+            // l10n:keep agent tool catalog
+            "看现在有没有特权通道（Shizuku / Root / 无线调试）、能不能用后台屏、以及设备动词为什么不能用。调用 device_setting 等之前先用它确认。",
+            emptyMap(),
+            emptyList(),
         ),
     )
 

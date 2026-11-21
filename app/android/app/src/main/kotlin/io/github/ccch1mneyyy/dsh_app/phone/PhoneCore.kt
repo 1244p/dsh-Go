@@ -24,6 +24,17 @@ interface PhoneEnv {
     /** Why the background display can't be used, as a sentence for the model. */
     fun backgroundUnavailable(): String
     fun system(): SystemApi
+
+    /**
+     * The fixed privileged device surface (`device_setting` / `device_app` / `device_files` /
+     * `device_status`), or null where there is none (the JVM tests, a build without the engine).
+     *
+     * A default so that every existing fake keeps compiling: the tools still exist in the catalog,
+     * and a null bridge answers with the "needs root" sentence instead of removing them — the tool
+     * list must not vary with permission state (see [PhoneToolCatalog]).
+     */
+    fun device(): DeviceBridge? = null
+
     fun uiText(): PhoneUiText = PhoneUiText.DEFAULT
     fun zone(): ZoneId
     /** Tells the person what to fix (accessibility off, …); at most once per task and kind. */
@@ -377,6 +388,10 @@ class PhoneCore(
                 PhoneToolCatalog.TAP, PhoneToolCatalog.TYPE, PhoneToolCatalog.SCROLL, PhoneToolCatalog.TAP_XY -> act(name, a, scope, owner)
                 PhoneToolCatalog.KEY -> key(a, owner)
                 PhoneToolCatalog.HANDOFF -> handoff(a, scope, owner)
+                PhoneToolCatalog.DEVICE_SETTING -> deviceSetting(a, scope, owner)
+                PhoneToolCatalog.DEVICE_APP -> deviceApp(a, scope, owner)
+                PhoneToolCatalog.DEVICE_FILES -> deviceFiles(a, scope, owner)
+                PhoneToolCatalog.DEVICE_STATUS -> deviceStatus()
                 // l10n:keep agent tool result
                 else -> Out("没有这个手机工具：$name", error = true)
             }
@@ -1298,6 +1313,250 @@ class PhoneCore(
 
     private fun stoppedOut(summary: String) = Out(PhoneTasks.STOPPED_MESSAGE + "。", error = true,
         summary = summary, decision = "stopped")
+
+    // ── Device verbs (root only) ────────────────────────────────────────────────────
+
+    /**
+     * The one sentence a device tool gives up with when there is no privileged channel. The tool
+     * stays in the catalog on purpose: dropping it would change the schema and void the request
+     * cache, and a missing tool tells the model nothing about why.
+     */
+    private fun noDevice(): Out = Out(
+        // l10n:keep agent tool result
+        "这个能力需要真 Root：在 DSH 设置 → 手机操控里把后台通道切成 Root 并授权（su），再用 device_status 确认。当前没有特权通道，未执行。",
+        error = true,
+        summary = ui.get("phone_log_device_unavailable", "设备能力不可用"), // l10n:keep test default
+        decision = "refused:no-root",
+    )
+
+    private fun deviceBridge(): DeviceBridge? = env.device()
+
+    private fun deviceFailure(e: DeviceFailure): Out = Out(
+        Reasons.of(e.code),
+        error = true,
+        summary = ui.get("phone_log_device_failed", "设备能力失败"), // l10n:keep test default
+        decision = "refused:${e.code}",
+    )
+
+    private fun deviceSetting(a: Args, scope: SerialWorker.Scope, owner: PhoneTasks.Owner): Out {
+        if (!current(owner)) return stoppedOut(PhoneToolCatalog.DEVICE_SETTING)
+        val bridge = deviceBridge() ?: return noDevice()
+        val namespace = a.str("namespace")
+        val key = a.str("key")
+        // l10n:keep agent tool result
+        if (namespace == null || key == null) return Out("device_setting 需要 namespace 和 key。", error = true)
+        val action = (a.str("action") ?: "read").lowercase()
+        if (action == "read") {
+            return try {
+                val value = bridge.setting(namespace, key)
+                Out(
+                    // l10n:keep agent tool result
+                    if (value == null) "$namespace/$key 当前没有值。" else "$namespace/$key = $value",
+                    summary = ui.get("phone_log_device_read", "读设置"), // l10n:keep test default
+                    decision = "ok",
+                )
+            } catch (e: DeviceFailure) {
+                deviceFailure(e)
+            }
+        }
+        if (action != "write") {
+            // l10n:keep agent tool result
+            return Out("device_setting 的 action 只有 read / write。", error = true)
+        }
+        val value = a.int("value")
+        // l10n:keep agent tool result
+        if (value == null) return Out("device_setting 写设置需要整数 value。", error = true)
+        val sentence = ui.get("phone_confirm_device_setting", "把 %1\$s/%2\$s 改成 %3\$d？", namespace, key, value) // l10n:keep test default
+        val verdict = safety.confirmation(sentence, null, null, "device-setting")
+        val decision = when (val r = safety.resolve(verdict, scope, owner)) {
+            is SafetyGate.Result.No -> return Out(r.message, error = true, summary = ui.get("phone_log_device_write", "改设置"), decision = r.decision) // l10n:keep test default
+            is SafetyGate.Result.Go -> r.decision
+        }
+        if (!current(owner)) return stoppedOut(PhoneToolCatalog.DEVICE_SETTING)
+        skillTrace.markIncomplete(owner)
+        return try {
+            bridge.writeSetting(namespace, key, value)
+            Out(
+                // l10n:keep agent tool result
+                "$namespace/$key 已写成 $value，读回一致。",
+                summary = ui.get("phone_log_device_write", "改设置"), // l10n:keep test default
+                decision = decision,
+            )
+        } catch (e: DeviceFailure) {
+            deviceFailure(e)
+        }
+    }
+
+    private fun deviceApp(a: Args, scope: SerialWorker.Scope, owner: PhoneTasks.Owner): Out {
+        if (!current(owner)) return stoppedOut(PhoneToolCatalog.DEVICE_APP)
+        val bridge = deviceBridge() ?: return noDevice()
+        val packageName = a.str("package")
+        // l10n:keep agent tool result
+        if (packageName == null) return Out("device_app 需要 package（包名）。", error = true)
+        val action = a.str("action")?.lowercase() ?: "info"
+        // l10n:keep agent tool result
+        if (action !in PhoneToolCatalog.APP_ACTIONS) return Out("device_app 的 action 只有 info / disable / enable / forceStop。", error = true)
+        // The deny list rides with the request: the engine has no policy of its own, and a leaked
+        // cookie must not be able to stop a payment app just because it skipped this call.
+        val deny = runCatching { env.policies().denyPackages }.getOrDefault(emptyList())
+        if (action != "info") {
+            val refusal = safety.checkRead(packageName, null)
+            if (refusal != null) {
+                return Out(refusal.message, error = true, summary = ui.get("phone_log_device_app", "应用操作"), decision = "refused:${refusal.rule}") // l10n:keep test default
+            }
+            val sentence = when (action) {
+                "disable" -> ui.get("phone_confirm_device_disable", "停用应用 %1\$s？停用后它不会自己启动，直到重新启用。", packageName) // l10n:keep test default
+                "enable" -> ui.get("phone_confirm_device_enable", "启用应用 %1\$s？", packageName) // l10n:keep test default
+                else -> ui.get("phone_confirm_device_stop", "强制停止应用 %1\$s？它正在做的事会中断。", packageName) // l10n:keep test default
+            }
+            val decision = when (val r = safety.resolve(safety.confirmation(sentence, packageName, null, "device-app"), scope, owner)) {
+                is SafetyGate.Result.No -> return Out(r.message, error = true, summary = ui.get("phone_log_device_app", "应用操作"), decision = r.decision) // l10n:keep test default
+                is SafetyGate.Result.Go -> r.decision
+            }
+            if (!current(owner)) return stoppedOut(PhoneToolCatalog.DEVICE_APP)
+            skillTrace.markIncomplete(owner)
+            return try {
+                val info = bridge.app(packageName, action, deny)
+                Out(describeApp(info, action), summary = ui.get("phone_log_device_app", "应用操作"), decision = decision) // l10n:keep test default
+            } catch (e: DeviceFailure) {
+                deviceFailure(e)
+            }
+        }
+        return try {
+            Out(describeApp(bridge.app(packageName, "info", deny), "info"), summary = ui.get("phone_log_device_app", "应用操作")) // l10n:keep test default
+        } catch (e: DeviceFailure) {
+            deviceFailure(e)
+        }
+    }
+
+    private fun describeApp(info: Map<String, Any?>, action: String): String {
+        val label = info["label"] as? String
+        val pkg = info["package"] as? String
+        val enabled = info["enabled"] as? Boolean == true
+        val system = info["system"] as? Boolean == true
+        return buildString {
+            when (action) {
+                // l10n:keep agent tool result
+                "disable" -> append("已停用 ")
+                // l10n:keep agent tool result
+                "enable" -> append("已启用 ")
+                // l10n:keep agent tool result
+                "forceStop" -> append("已强制停止 ")
+                // l10n:keep agent tool result
+                else -> append("应用 ")
+            }
+            append(label ?: pkg ?: "这个包")
+            if (pkg != null && label != null) append(" · ").append(pkg)
+            // l10n:keep agent tool result
+            append(if (enabled) "，现在是启用状态" else "，现在是停用状态")
+            // l10n:keep agent tool result
+            if (system) append("（系统应用）")
+        }
+    }
+
+    private fun deviceFiles(a: Args, scope: SerialWorker.Scope, owner: PhoneTasks.Owner): Out {
+        if (!current(owner)) return stoppedOut(PhoneToolCatalog.DEVICE_FILES)
+        val bridge = deviceBridge() ?: return noDevice()
+        val action = a.str("action")?.lowercase() ?: "list"
+        // l10n:keep agent tool result
+        if (action !in PhoneToolCatalog.FILE_ACTIONS) return Out("device_files 的 action 只有 list / read / write。", error = true)
+        val path = a.str("path")
+        // l10n:keep agent tool result
+        if (path == null) return Out("device_files 需要 path（/sdcard 下的绝对路径）。", error = true)
+        val encoding = (a.str("encoding") ?: "utf8").lowercase()
+        if (encoding !in setOf("utf8", "base64")) {
+            // l10n:keep agent tool result
+            return Out("device_files 的 encoding 只有 utf8 / base64。", error = true)
+        }
+        if (action == "write") {
+            val content = a.text("content")
+            // l10n:keep agent tool result
+            if (content == null) return Out("device_files 写文件需要 content。", error = true)
+            val data = if (encoding == "base64") {
+                try {
+                    java.util.Base64.getDecoder().decode(content)
+                } catch (_: IllegalArgumentException) {
+                    // l10n:keep agent tool result
+                    return Out("content 不是合法的 base64。", error = true)
+                }
+            } else {
+                // Both directions name the charset: the platform default on Android is UTF-8 today,
+                // but a locale that changes it would silently corrupt every text file the agent writes.
+                content.toByteArray(Charsets.UTF_8)
+            }
+            val sentence = ui.get("phone_confirm_device_file_write", "往手机存储写 %1\$s（%2\$d 字节）？", path, data.size) // l10n:keep test default
+            val decision = when (val r = safety.resolve(safety.confirmation(sentence, null, null, "device-file-write"), scope, owner)) {
+                is SafetyGate.Result.No -> return Out(r.message, error = true, summary = ui.get("phone_log_device_file", "文件操作"), decision = r.decision) // l10n:keep test default
+                is SafetyGate.Result.Go -> r.decision
+            }
+            if (!current(owner)) return stoppedOut(PhoneToolCatalog.DEVICE_FILES)
+            skillTrace.markIncomplete(owner)
+            return try {
+                val result = bridge.write(path, data, a.int("offset"))
+                // l10n:keep agent tool result
+                Out("已写入 $path，现在共 ${result["total"]} 字节。", summary = ui.get("phone_log_device_file", "文件操作"), decision = decision) // l10n:keep test default
+            } catch (e: DeviceFailure) {
+                deviceFailure(e)
+            }
+        }
+        return try {
+            if (action == "list") {
+                val result = bridge.list(path, a.int("limit"))
+                @Suppress("UNCHECKED_CAST")
+                val entries = result["entries"] as? List<String> ?: emptyList()
+                // l10n:keep agent tool result
+                if (entries.isEmpty()) return Out("$path 下没有可见的条目。", summary = ui.get("phone_log_device_file", "文件操作")) // l10n:keep test default
+                val text = buildString {
+                    // l10n:keep agent tool result
+                    append(path).append("（").append(result["total"]).append(" 项）：\n")
+                    entries.forEach { append(it).append('\n') }
+                    // l10n:keep agent tool result
+                    if (result["truncated"] == true) append("…条目太多，只列了前 ${entries.size} 个\n")
+                }.trimEnd()
+                Out(text, summary = ui.get("phone_log_device_file", "文件操作")) // l10n:keep test default
+            } else {
+                val result = bridge.read(path, a.int("offset"), a.int("limit"))
+                val data = result["data"] as? ByteArray ?: ByteArray(0)
+                val body = if (encoding == "base64") java.util.Base64.getEncoder().encodeToString(data) else String(data, Charsets.UTF_8)
+                val total = result["total"]
+                val offset = result["offset"]
+                Out(
+                    // l10n:keep agent tool result
+                    "$path（第 $offset 字节起，共 $total 字节）：\n$body",
+                    summary = ui.get("phone_log_device_file", "文件操作"), // l10n:keep test default
+                )
+            }
+        } catch (e: DeviceFailure) {
+            deviceFailure(e)
+        }
+    }
+
+    private fun deviceStatus(): Out {
+        val bridge = deviceBridge()
+        if (bridge == null) {
+            // l10n:keep agent tool result
+            return Out("没有特权通道实现（这个构建没有引擎）。", error = true, summary = ui.get("phone_log_device_status", "设备状态")) // l10n:keep test default
+        }
+        val status = bridge.status()
+        val mode = status["mode"] as? String ?: bridge.mode()
+        val usable = mode == "root"
+        val text = buildString {
+            // l10n:keep agent tool result
+            append("后台通道：").append(mode)
+            // l10n:keep agent tool result
+            append(if (usable) "（device_* 可用）" else "（device_* 需要 Root）")
+            val reason = status["reason"] as? String
+            // l10n:keep agent tool result
+            if (!reason.isNullOrBlank()) append("；").append(reason)
+            val root = status["root"]
+            if (root is Map<*, *>) {
+                // l10n:keep agent tool result
+                append("\nRoot：")
+                append(root["reason"] ?: if (root["connected"] == true) "已连接" else "未连接")
+            }
+        }
+        return Out(text, summary = ui.get("phone_log_device_status", "设备状态")) // l10n:keep test default
+    }
 
     companion object {
         internal const val REPLAY = "replay"

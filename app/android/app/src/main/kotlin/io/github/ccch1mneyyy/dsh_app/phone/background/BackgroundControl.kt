@@ -888,6 +888,44 @@ class BackgroundControl private constructor(context: Context) {
         } catch (_: Exception) { evidence.result(if (mayStart()) "unavailable" else "cancelled") }
     }
 
+    // ---- fixed device verbs (root only) ------------------------------------
+
+    /** The 不打扰模式 starter behind the published engine; `off` when nothing is selected. */
+    val currentMode: String get() = mode
+
+    /**
+     * One fixed device verb on the already published root engine: settings, app state, shared
+     * storage files. Deliberately like [collectSystemIme] and unlike [grantSecureSettings]: it never
+     * starts a transport, opens a display, takes a task slot or moves the gate, so the verbs work
+     * before a task exists and keep working after one ends.
+     *
+     * Root only. Shell (Shizuku/ADB) channels are uid 2000 and cannot write these settings or read
+     * other apps' storage; refusing here keeps one documented answer instead of a per-action
+     * failure matrix. Starting su stays an explicit user action ([prepareRoot] / the keeper).
+     */
+    fun device(request: Bundle, mayStart: () -> Boolean): Bundle {
+        if (!mayStart()) return deviceFailure("selectionCancelled")
+        val selected = synchronized(keepGuard) {
+            if (selectionChange != null || mode != "root") return deviceFailure("deviceRootRequired")
+            keep.selectionTicket() to channel
+        }
+        val ch = selected.second ?: return deviceFailure("deviceRootRequired")
+        if (!ch.alive()) return deviceFailure("deviceRootRequired")
+        val allowed = { mayStart() && selectionChange == null && keep.selectionCurrent(selected.first) && channel === ch }
+        return try {
+            val response = ch.execute(request)
+            // A write that raced a mode switch must not be reported as a confirmed success.
+            if (allowed()) response else deviceFailure("selectionCancelled")
+        } catch (_: Exception) {
+            deviceFailure("deviceUnavailable")
+        }
+    }
+
+    private fun deviceFailure(code: String): Bundle = Bundle().apply {
+        putBoolean(Proto.OK, false)
+        putString(Proto.ERROR, code)
+    }
+
     // ---- task lifecycle (called by the bridge/core) ------------------------
 
     /** Sessions calls this outside registry/Tasks/worker locks, before acquiring BG leases. */

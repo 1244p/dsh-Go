@@ -1027,6 +1027,10 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
 
     override fun system(): SystemApi = system
 
+    private val deviceBridge: DeviceBridge by lazy { PhoneDeviceBridge(background) }
+
+    override fun device(): DeviceBridge = deviceBridge
+
     override fun zone(): ZoneId = ZoneId.systemDefault()
 
     override fun notifyFix(kind: String) = notifyFixFor(tasks, kind)
