@@ -160,7 +160,7 @@ internal fun activateRuntimeUpdate(
         throw RuntimeUpgradeBlocked("legacy_interrupted")
     }
     if (Files.exists(rootfs.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-        val spec = checkEngineCompatibility(base, raw, version, abi)
+        val spec = checkEngineCompatibility(base, raw, version, abi, onLog)
         onLog("[dsh-app] upgrading engine; preserving installed Linux system and user tools")
         EngineUpgrade(base, sync).activate(version, spec)
         File(base, "staging").deleteRecursivelySafely()
