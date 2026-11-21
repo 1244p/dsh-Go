@@ -56,7 +56,11 @@ XZ_THREADS="${XZ_THREADS:-4}"       # each xz -6 worker needs ~100 MiB; output d
 PRUNE_DEV_METADATA="${PRUNE_DEV_METADATA:-1}"   # drop *.map / *.d.ts from node_modules
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1767225600}"  # 2026-01-01T00:00:00Z, fixed tar mtimes
 
-UBUNTU_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release"
+# cdimage.ubuntu.com and every mirror carry the same file list, but a mirror can
+# start refusing this directory on its own: tuna answered 403 to a CI runner on
+# 2026-11-21 while still serving it here, which fails the build before Flutter
+# runs. UBUNTU_MIRROR overrides the default without editing this file.
+UBUNTU_MIRROR="${UBUNTU_MIRROR:-https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release}"
 NODE_MIRROR="https://npmmirror.com/mirrors/node"
 NPM_REGISTRY="https://registry.npmmirror.com"
 TERMUX_REPO="https://packages.termux.dev/apt/termux-main"

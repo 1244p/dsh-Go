@@ -47,7 +47,23 @@ jobs:
           # supersedes a package (the mirror then 404s the old .deb), which fails this
           # step before Flutter ever runs. Re-resolving keeps the build alive; the chain
           # is still InRelease -> Packages.xz -> per-deb sha256.
-          UPDATE_DEB_LOCK=1 COMPRESS=xz ./runtime/build-runtime.sh arm64-v8a
+          #
+          # UBUNTU_MIRROR: one mirror can reject this directory on its own. tuna answered
+          # 403 to a runner on 2026-11-21 while still serving the same file here, and the
+          # step died on SHA256SUMS before doing any work. Fall back through the two
+          # mirrors that carry the identical file list; the sha256 pins are what decide.
+          for mirror in \
+            https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release \
+            https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release
+          do
+            echo "=== runtime inputs from $mirror ==="
+            if UBUNTU_MIRROR="$mirror" UPDATE_DEB_LOCK=1 COMPRESS=xz ./runtime/build-runtime.sh arm64-v8a; then
+              break
+            fi
+            echo "=== $mirror failed; trying the next one ==="
+            rm -rf runtime/.cache/ubuntu/24.04.5
+          done
+          test -f "runtime/out/manifest.json" || { echo "no runtime was built"; exit 1; }
           echo "=== runtime out ==="
           find runtime/out -maxdepth 4 -type f -exec ls -la {} \; | head -30
           du -sh runtime/out
