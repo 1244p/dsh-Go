@@ -57,4 +57,32 @@ class AccessibilityListTest {
             AccessibilityList.ensure("garbage", mine),
         )
     }
+
+    /**
+     * The regression that matter most: the first version of the boot repair read an empty list (the
+     * provider not loaded yet) and wrote back "just us", deleting every other accessibility service
+     * on the phone. An empty or missing value must come back untouched.
+     */
+    @Test fun anEmptyOrMissingListIsNeverTurnedIntoJustUs() {
+        assertEquals(null, AccessibilityList.ensureWhenPresent(null, mine))
+        assertEquals("", AccessibilityList.ensureWhenPresent("", mine))
+    }
+
+    @Test fun aRealListStillGetsUsAdded() {
+        val other = "com.example.other/com.example.other.Service"
+        assertEquals("$other:${mine.entry}", AccessibilityList.ensureWhenPresent(other, mine))
+    }
+
+    @Test fun aRealListThatAlreadyNamesUsIsReturnedAsTheSameInstance() {
+        val list = "com.example.other/com.example.other.Service:${mine.entry}"
+        assertSame(list, AccessibilityList.ensureWhenPresent(list, mine))
+    }
+
+    /** [AccessibilityProtection.keep] is the whole rule the settings hook applies, minus the switch. */
+    @Test fun theHookRuleLeavesAnEmptyValueAloneAndAddsUsToOneThatHasContent() {
+        assertEquals(null, AccessibilityProtection.keep(null, mine))
+        assertEquals("", AccessibilityProtection.keep("", mine))
+        val other = "com.example.other/com.example.other.Service"
+        assertEquals("$other:${mine.entry}", AccessibilityProtection.keep(other, mine))
+    }
 }

@@ -20,6 +20,18 @@ internal object AccessibilityList {
         return if (current.isEmpty()) component.entry else "$current:${component.entry}"
     }
 
+    /**
+     * [list] with [component] added **only when there was a list to add it to**.
+     *
+     * The system_server hook uses this one: a write that carries `null`/`""` is either the provider
+     * loading or a caller clearing the setting, and inventing "just us" from it deletes whatever
+     * else was there. Refusing to act loses nothing — the next write carries the real list.
+     */
+    fun ensureWhenPresent(list: String?, component: Component): String? {
+        if (list.isNullOrEmpty()) return list
+        return ensure(list, component)
+    }
+
     private fun matches(raw: String, component: Component): Boolean {
         val entry = raw.trim()
         val slash = entry.indexOf('/')
