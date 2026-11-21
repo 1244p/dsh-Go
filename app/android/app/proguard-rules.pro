@@ -10,6 +10,10 @@
 # and talks to the app through a hand-written Binder and Parcel/Bundle protocol.
 -keep class io.github.ccch1mneyyy.dsh_app.phone.background.** { *; }
 
+# LSPosed module: java_init.list names the entry class in a text file inside the
+# APK, so the framework instantiates it reflectively — R8 cannot see that use.
+-keep class io.github.ccch1mneyyy.dsh_app.xposed.** { *; }
+
 # Bouncy Castle and Conscrypt look providers and algorithms up by name;
 # libadb-android drives both for wireless-debugging pairing and TLS.
 -keep class org.bouncycastle.** { *; }

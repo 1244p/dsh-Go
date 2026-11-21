@@ -353,6 +353,9 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
         // The app's start: a force stop took the accessibility service out of the settings.
         cleanupIo.execute { taskJournal.load(); emitStatus() }
         ticker.execute(::keep)
+        // A switch turned on before the module was installed, or before this build had the code,
+        // left no guard key behind. Sync it once here so the module's first hook call sees it.
+        A11yKeeper.arm(app, isEnabled())
     }
 
     // ── Switch and app lists ────────────────────────────────────────────────────────
@@ -366,6 +369,11 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
         synchronized(keeperSwitchLock) {
             prefs.edit().putBoolean(K_ENABLED, enabled).apply()
         }
+        // The LSPosed module keeps the accessibility entry in place from inside system_server;
+        // it only acts while this key says the switch is on. Written after the preference so a
+        // module that reads it early sees the new state, and outside the lock above because the
+        // keeper takes that same lock for its own settings writes.
+        A11yKeeper.arm(app, enabled)
         if (!enabled) {
             // l10n:keep agent stop reason
             sessions.stopAll("手机操控已关闭")

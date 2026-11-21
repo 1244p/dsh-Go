@@ -27,10 +27,28 @@ object A11yKeeper {
     /** Between taking the service out and putting it back: the system must see both. */
     private const val REBIND_GAP_MS = 1_000L
 
+    /** Read by the LSPosed module in system_server; duplicated there because it cannot import us. */
+    const val GUARD_KEY = "dsh_go_a11y_guard"
+
     private var plan: KeeperPlan? = null
 
     fun granted(context: Context): Boolean =
         context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Arm or disarm the LSPosed module (see `xposed/AccessibilityProtection.kt`). The module runs in
+     * system_server, where none of this app's classes exist, so it hard-codes the same key name —
+     * keep the two in step. Fails quietly: without WRITE_SECURE_SETTINGS nobody can arm it, and the
+     * keeper above still repairs the list the slow way.
+     */
+    fun arm(context: Context, on: Boolean) {
+        if (!granted(context)) return
+        try {
+            Settings.Secure.putInt(context.contentResolver, GUARD_KEY, if (on) 1 else 0)
+        } catch (_: Exception) {
+            Log.w(TAG, "could not arm the accessibility guard")
+        }
+    }
 
     /**
      * One look, and the fix it calls for. True while bringing the service up is the keeper's job

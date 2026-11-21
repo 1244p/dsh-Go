@@ -84,6 +84,12 @@ android {
             // Keep the Termux binaries byte-identical to runtime/out (their hashes are in the manifest).
             keepDebugSymbols += listOf("**/libproot.so", "**/libproot-loader.so", "**/libtalloc.so", "**/libandroid-shmem.so")
         }
+        resources {
+            // META-INF/xposed/* is read out of the installed APK by LSPosed's manager, which looks
+            // for those exact paths. AAPT2 does not process them, but the packager does drop
+            // "hidden" META-INF entries unless they are named here.
+            merges += "META-INF/xposed/*"
+        }
     }
 
     lint {
@@ -156,4 +162,10 @@ dependencies {
     // pulls in (bcprov-jdk15to18:1.81); adding jdk18on next to it duplicates every class.
     implementation("org.bouncycastle:bcpkix-jdk15to18:1.81")
     implementation("androidx.webkit:webkit:1.15.0") // Apache-2.0: web islands' force dark (webview_flutter's own version)
+
+    // LSPosed module (xposed/): the API is compile-only because the framework injects it at
+    // runtime into system_server, where this APK's classes do not exist. The `service` artifact
+    // is deliberately not taken — it exists for module↔manager IPC (RemotePreferences) and its
+    // AAR demands compileSdk 37, while the module reads its arm switch from Settings.Secure.
+    compileOnly("io.github.libxposed:api:102.0.0")
 }
