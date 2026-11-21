@@ -98,7 +98,14 @@ internal object AccessibilityProtection {
         component: Component,
     ) {
         val server = HookSupport.findClassOrNull(loader, "com.android.server.SystemServer")
-        val start = server?.let { HookSupport.findMethod(it, "startOtherServices") }
+        // Android 14+ declares `private void startOtherServices(TimingsTraceAndSlog)`. Matching on
+        // the parameter type would mean naming a hidden class, so match on arity instead and let a
+        // future overload with the same arity surface as a wrong-target hook rather than a silent
+        // skip. `findMethods` already makes it accessible, which is what calling a private member
+        // from a hook needs.
+        val start = server
+            ?.let { HookSupport.findMethods(it) { method -> method.name == "startOtherServices" && method.parameterCount == 1 } }
+            ?.firstOrNull()
         if (start == null) {
             journal.missing("repair", "SystemServer.startOtherServices", "method not found")
             return
