@@ -55,6 +55,7 @@ Future<(FakeHost, MemoryStore)> _pump(
       brightness: brightness,
       overrides: [
         hostedLinkStoreProvider.overrideWithValue(store),
+        hostedLinksClockProvider.overrideWithValue(() => _now),
         hostedShareClientProvider.overrideWithValue(
           HostedShareClient(client: host.client, origin: 'https://go.example'),
         ),
